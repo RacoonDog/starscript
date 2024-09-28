@@ -43,5 +43,20 @@ public class Main {
         ss.remove("player.name");
 
         System.out.println("Output #2: " + ss.run(script));
+
+        Script scopedVariableTestScript = Compiler.compile(Parser.parse("{scoped_variable}"));
+        ss.set("scoped_variable", true);
+
+        System.out.println("Is scoped behaviour correct 1? true = " + ss.run(scopedVariableTestScript));
+
+        try (Scope.LocalScope scope = ss.scope()) {
+            scope.set("scoped_variable", false);
+            System.out.println("Is scoped behaviour correct 2? false = " + ss.run(scopedVariableTestScript, scope));
+
+            scope.remove("scoped_variable");
+            System.out.println("Is scoped behaviour correct 3? null = " + ss.run(scopedVariableTestScript, scope));
+        }
+
+        System.out.println("Is scoped behaviour correct 1? true = " + ss.run(scopedVariableTestScript));
     }
 }

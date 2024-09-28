@@ -11,12 +11,12 @@ import java.util.function.Supplier;
 
 /** A VM (virtual machine) that can run compiled starscript code, {@link Script}. */
 public class Starscript {
-    private final ValueMap globals;
+    private final Scope.GlobalScope globals;
 
     private final Stack<Value> stack = new Stack<>();
 
     public Starscript() {
-        globals = new ValueMap();
+        globals = new Scope.GlobalScope();
     }
 
     /** Creates a new Starscript instance with shared globals ({@link #getGlobals()}) from the parent instance. */
@@ -26,6 +26,11 @@ public class Starscript {
 
     /** Runs the script and fills the provided {@link StringBuilder}. Throws {@link StarscriptError} if a runtime error happens. */
     public Section run(Script script, StringBuilder sb) {
+        return run(script, sb, globals);
+    }
+
+    /** Runs the script with the given scope and fills the provided {@link StringBuilder}. Throws {@link StarscriptError} if a runtime error happens. */
+    public Section run(Script script, StringBuilder sb, Scope scope) {
         stack.clear();
 
         sb.setLength(0);
@@ -63,7 +68,7 @@ public class Starscript {
                 case Less:              { Value b = pop(); Value a = pop(); if (a.isNumber() && b.isNumber()) push(Value.bool(a.getNumber() < b.getNumber())); else error("This operation requires 2 number."); break; }
                 case LessEqual:         { Value b = pop(); Value a = pop(); if (a.isNumber() && b.isNumber()) push(Value.bool(a.getNumber() <= b.getNumber())); else error("This operation requires 2 number."); break; }
 
-                case Variable:          { String name = script.constants.get(script.code[ip++] & 0xFF).getString(); Supplier<Value> s = globals.getRaw(name); push(s != null ? s.get() : Value.null_()); break; }
+                case Variable:          { String name = script.constants.get(script.code[ip++] & 0xFF).getString(); Supplier<Value> s = scope.getRaw(name); push(s != null ? s.get() : Value.null_()); break; }
                 case Get:               { String name = script.constants.get(script.code[ip++] & 0xFF).getString(); Value v = pop(); if (!v.isMap()) { push(Value.null_()); break; } Supplier<Value> s = v.getMap().getRaw(name); push(s != null ? s.get() : Value.null_()); break; }
                 case Call:              { int argCount = script.code[ip++]; Value a = peek(argCount); if (a.isFunction()) { Value r = a.getFunction().run(this, argCount); pop(); push(r); } else error("Tried to call a %s, can only call functions.", a.type); break; }
 
@@ -75,19 +80,19 @@ public class Starscript {
 
                 case Append:            sb.append(pop().toString()); break;
                 case ConstantAppend:    sb.append(script.constants.get(script.code[ip++] & 0xFF).toString()); break;
-                case VariableAppend:    { Supplier<Value> s = globals.getRaw(script.constants.get(script.code[ip++] & 0xFF).getString()); sb.append((s == null ? Value.null_() : s.get()).toString()); break; }
+                case VariableAppend:    { Supplier<Value> s = scope.getRaw(script.constants.get(script.code[ip++] & 0xFF).getString()); sb.append((s == null ? Value.null_() : s.get()).toString()); break; }
                 case GetAppend:         { String name = script.constants.get(script.code[ip++] & 0xFF).getString(); Value v = pop(); if (!v.isMap()) { sb.append(Value.null_()); break; } Supplier<Value> s = v.getMap().getRaw(name); sb.append((s != null ? s.get() : Value.null_()).toString()); break; }
                 case CallAppend:        { int argCount = script.code[ip++]; Value a = peek(argCount); if (a.isFunction()) { Value r = a.getFunction().run(this, argCount); pop(); sb.append(r.toString()); } else error("Tried to call a %s, can only call functions.", a.type); break; }
 
                 case VariableGet:       {
                     Value v;
-                    { String name = script.constants.get(script.code[ip++] & 0xFF).getString(); Supplier<Value> s = globals.getRaw(name); v = s != null ? s.get() : Value.null_(); } // Variable
+                    { String name = script.constants.get(script.code[ip++] & 0xFF).getString(); Supplier<Value> s = scope.getRaw(name); v = s != null ? s.get() : Value.null_(); } // Variable
                     { String name = script.constants.get(script.code[ip++] & 0xFF).getString(); if (!v.isMap()) { push(Value.null_()); break; } Supplier<Value> s = v.getMap().getRaw(name); push(s != null ? s.get() : Value.null_()); } // Get
                     break;
                 }
                 case VariableGetAppend: {
                     Value v;
-                    { String name = script.constants.get(script.code[ip++] & 0xFF).getString(); Supplier<Value> s = globals.getRaw(name); v = s != null ? s.get() : Value.null_(); } // Variable
+                    { String name = script.constants.get(script.code[ip++] & 0xFF).getString(); Supplier<Value> s = scope.getRaw(name); v = s != null ? s.get() : Value.null_(); } // Variable
                     { String name = script.constants.get(script.code[ip++] & 0xFF).getString(); if (!v.isMap()) { push(Value.null_()); break; } Supplier<Value> s = v.getMap().getRaw(name); v = s != null ? s.get() : Value.null_(); } // Get
                     { sb.append(v.toString()); } // Append
                     break;
@@ -109,6 +114,11 @@ public class Starscript {
     /** Runs the script. Throws {@link StarscriptError} if a runtime error happens. */
     public Section run(Script script) {
         return run(script, new StringBuilder());
+    }
+
+    /** Runs the script with the given scope. Throws {@link StarscriptError} if a runtime error happens. */
+    public Section run(Script script, Scope scope) {
+        return run(script, new StringBuilder(), scope);
     }
 
     // Stack manipulation
@@ -171,42 +181,42 @@ public class Starscript {
     // Globals
 
     /** Sets a variable supplier for the provided name. <br><br> See {@link ValueMap#set(String, Supplier)} for dot notation. */
-    public ValueMap set(String name, Supplier<Value> supplier) {
+    public Scope set(String name, Supplier<Value> supplier) {
         return globals.set(name, supplier);
     }
 
     /** Sets a variable supplier that always returns the same value for the provided name. <br><br> See {@link ValueMap#set(String, Supplier)} for dot notation. */
-    public ValueMap set(String name, Value value) {
+    public Scope set(String name, Value value) {
         return globals.set(name, value);
     }
 
     /** Sets a boolean variable supplier that always returns the same value for the provided name. <br><br> See {@link ValueMap#set(String, Supplier)} for dot notation. */
-    public ValueMap set(String name, boolean bool) {
+    public Scope set(String name, boolean bool) {
         return globals.set(name, bool);
     }
 
     /** Sets a number variable supplier that always returns the same value for the provided name. <br><br> See {@link ValueMap#set(String, Supplier)} for dot notation. */
-    public ValueMap set(String name, double number) {
+    public Scope set(String name, double number) {
         return globals.set(name, number);
     }
 
     /** Sets a string variable supplier that always returns the same value for the provided name. <br><br> See {@link ValueMap#set(String, Supplier)} for dot notation. */
-    public ValueMap set(String name, String string) {
+    public Scope set(String name, String string) {
         return globals.set(name, string);
     }
 
     /** Sets a function variable supplier that always returns the same value for the provided name. <br><br> See {@link ValueMap#set(String, Supplier)} for dot notation. */
-    public ValueMap set(String name, SFunction function) {
+    public Scope set(String name, SFunction function) {
         return globals.set(name, function);
     }
 
     /** Sets a map variable supplier that always returns the same value for the provided name. <br><br> See {@link ValueMap#set(String, Supplier)} for dot notation. */
-    public ValueMap set(String name, ValueMap map) {
+    public Scope set(String name, ValueMap map) {
         return globals.set(name, map);
     }
 
     /** Sets an object variable supplier that always returns the same value for the provided name. <br><br> See {@link ValueMap#set(String, Supplier)} for dot notation. */
-    public ValueMap set(String name, Object object) {
+    public Scope set(String name, Object object) {
         return globals.set(name, object);
     }
 
@@ -221,8 +231,13 @@ public class Starscript {
     }
 
     /** Returns the underlying {@link ValueMap} for global variables. */
-    public ValueMap getGlobals() {
+    public Scope getGlobals() {
         return globals;
+    }
+
+    /** Creates a new {@link org.meteordev.starscript.Scope.LocalScope} */
+    public Scope.LocalScope scope() {
+        return globals.scope();
     }
 
     // Completions
